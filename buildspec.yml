@@ -1,0 +1,86 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      # Install dependencies
+      - pip install requests
+      
+     # Upgrade AWS CLI to the latest version
+      - pip install --upgrade awscli
+      - mkdir -p /root/.aws/
+      - aws s3 cp s3://$BUILD_CONFIG_AWS /root/.aws/
+      - aws s3 cp s3://$BUILD_CREDENTIALS_AWS /root/.aws/
+      
+      ## TODO Need to change the path for Google Key
+      - aws s3 cp s3://$BUILD_CREDENTIALS_GKEY src/asr/core
+      - aws s3 cp s3://$BUILD_MODEL_MITIE_PATH src/nlu/models/mitie
+      - aws s3 cp s3://$BUILD_MODEL_DS_PATH  src/asr/models/DeepSpeech
+      
+      - chmod +x src/asr/core/key.json
+      
+      # Install Kubectl
+      - curl -o kubectl  https://amazon-eks.s3-us-west-2.amazonaws.com/1.10.3/2018-06-05/bin/linux/amd64/kubectl
+      - chmod +x ./kubectl
+      - cp kubectl /usr/local/bin/
+      - sudo kubectl version --short --client
+      
+      
+      #Install heptio-authenticator-aws for Amazon EKS
+      
+      - curl -o heptio-authenticator-aws  https://amazon-eks.s3-us-west-2.amazonaws.com/1.10.3/2018-06-05/bin/linux/amd64/heptio-authenticator-aws
+      - chmod +x ./heptio-authenticator-aws
+      - cp heptio-authenticator-aws /usr/local/bin/
+      - sudo heptio-authenticator-aws help
+         
+  
+      - export KUBECONFIG=$KUBECONFIG:eks_configs/config-voicepipeline_eks_cluster
+      - echo 'export KUBECONFIG=$KUBECONFIG:eks_configs/config-voicepipeline_eks_cluster' >> ~/.bashrc
+      - kubectl apply -f eks_configs/aws-auth-cm.yaml
+      
+  pre_build:
+    commands:
+      - sudo `aws ecr get-login --no-include-email --region us-east-1`
+            
+  build:
+    commands:
+    ## TODO: Unit test cases will be added in CI/CD
+    
+      #- python3 -m unittest discover test
+      
+      
+      # Use AWS Serverless Application Model to package the application by using AWS CloudFormation
+      # - aws cloudformation package --template template.yml --s3-bucket $S3_BUCKET --output-template template-export.yml
+            
+      - sudo docker build -f dockers/Dockerfile.nlu -t 464451733952.dkr.ecr.us-east-1.amazonaws.com/voicepipeline/nlu:demo .
+      - sudo docker push 464451733952.dkr.ecr.us-east-1.amazonaws.com/voicepipeline/nlu:demo
+      
+     
+      - sudo docker build -f dockers/Dockerfile.fend -t 464451733952.dkr.ecr.us-east-1.amazonaws.com/voicepipeline/frontend:demo .
+      - sudo docker push 464451733952.dkr.ecr.us-east-1.amazonaws.com/voicepipeline/frontend:demo
+      
+      - sudo docker build -f dockers/Dockerfile.asr -t 464451733952.dkr.ecr.us-east-1.amazonaws.com/voicepipeline/asr:demo .
+      - sudo docker push 464451733952.dkr.ecr.us-east-1.amazonaws.com/voicepipeline/asr:demo
+              
+  post_build:
+    commands:
+      # TODO: Generate Coverage Report
+      
+      # Create PODS in EKS
+  
+      - kubectl apply -f eks_configs/asr-controller.json
+      - kubectl apply -f eks_configs/asr-service.json
+      - kubectl apply -f eks_configs/frontend-controller.json
+      - kubectl apply -f eks_configs/frontend-service.json
+      - kubectl apply -f eks_configs/nlu-controller.json
+      - kubectl apply -f eks_configs/nlu-service.json
+      
+      ## Testing Command for Accessing Frontend
+      
+      - kubectl get services -o wide > out.txt
+      - cp out.txt src/front_end_service/core
+      - python src/front_end_service/core/frontend_client.py
+      - rm out.txt
+      
+            
+      
